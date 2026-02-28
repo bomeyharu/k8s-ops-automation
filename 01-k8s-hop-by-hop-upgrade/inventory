@@ -1,0 +1,12 @@
+# Control plane
+[masters]
+k8s-master-bomey.com
+
+# worker nodes
+[workers]
+k8s-worker1-bomey.com
+k8s-worker2-bomey.com
+
+[k8s:children]
+masters
+workers

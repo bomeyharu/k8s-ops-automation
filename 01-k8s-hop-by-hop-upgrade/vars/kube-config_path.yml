@@ -1,0 +1,3 @@
+---
+# Ansible　Control　Node又はBastionにあるkubeconfigのpath情報を記入 
+kubeconfig_path: "/home/bomey/.kube/config"
