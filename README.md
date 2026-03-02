@@ -15,9 +15,9 @@ IaCを活用した自動化の設計・実装プロセスを記録し、継続�
 
 # 3. Roadmap（進行状況）
 - [x] **Phase 1: K8s Hop-by-Hop Upgrade（Ansible）** （In Progress）
-- [ ] **Phase 2: K8s Self-Healing Toolkit（Python）** （Pending）
-- [ ] **Phase 3: Automated Certificate Management（Python）** （Pending）
-- [ ] **Phase 4: Multi-node Scale-out（Terraform）** （Pending）
+- [ ] **Phase 2: K8s Diagnosis-Tool（Python）** （Planned）
+- [ ] **Phase 3: Automated Certificate Management（Python）** （Coming Soon）
+- [ ] **Phase 4: Multi-node Scale-out（Terraform）** （Coming Soon）
 
 # 4. Repository Structure
 - **[01-k8s-hop-by-hop-upgrade/](./01-k8s-hop-by-hop-upgrade/)**: K8s Hop-by-Hop Upgrade (Ansible)
