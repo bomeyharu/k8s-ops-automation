@@ -35,7 +35,6 @@ Ansible Playbookを活用し、アップグレード作業の標準化及び効�
 - **Fail-Fast Principle**: 作業前後にNode及びPodの状態をKubernetes API経由でチェックし、想定外の状態や異常を検知した場合、作業を中断。
 - **Cluster Integrity**: `kubernetes.core` collectionを活用したCluster正常性チェック。
 
-
 ### 3. Human Error Mitigation
 - **Centralized Management**: Bastion経由でのみ実行し、各Nodeへの直接ssh接続を排除。
 - **Principle of Least Privilege**: 最小権限の原則に基づいた設計により、手動作業でオペレーターがRoot権限を取得することを防止。
