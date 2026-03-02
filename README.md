@@ -16,18 +16,18 @@ IaCを活用した自動化の設計・実装プロセスを記録し、継続�
 # 3. Roadmap（進行状況）
 - [x] **Phase 1: K8s Hop-by-Hop Upgrade（Ansible）** （In Progress）
 - [ ] **Phase 2: K8s Diagnosis-Tool（Python）** （Planned）
-- [ ] **Phase 3: Automated Certificate Management（Python）** （Coming Soon）
-- [ ] **Phase 4: Multi-node Scale-out（Terraform）** （Coming Soon）
+- [ ] **Phase 3: Multi-node Scale-out（Terraform）** （Coming Soon）
+- [ ] **Phase 4: Automated Certificate Management（Python）** （Coming Soon）
 
 # 4. Repository Structure
 - **[01-k8s-hop-by-hop-upgrade/](./01-k8s-hop-by-hop-upgrade/)**: K8s Hop-by-Hop Upgrade (Ansible)
   - Ansibleを用いたサービス影響を最小化するアップグレード自動化
 - **[02-k8s-diagnosis-tool/](./02-k8s-diagnosis-tool/)**: K8s SRE Diagnosis Toolkit (Python)
   - Python SDKを用いた障害検知及びロギング(Logging)
-- **[03-ocp-cert-management/](./03-ocp-cert-management/)**: Automated Certificate Management (Python)
-  - OCP証明書のライフサイクル自動管理
-- **[04-k8s-scale-out-terraform/](./04-k8s-scale-out-terraform/)**: Multi-node Scale-out (Terraform)
+- **[03-k8s-scale-out-terraform/](./03-k8s-scale-out-terraform/)**: Multi-node Scale-out (Terraform)
   - Terraformを活用したインフラ拡張自動化
+- **[04-ocp-cert-management/](./04-ocp-cert-management/)**: Automated Certificate Management (Python)
+  - OCP証明書のライフサイクル自動管理
 
 # 5. Tech Stack
 | Category | Tools & Libraries |
