@@ -22,8 +22,8 @@ IaCを活用した自動化の設計・実装プロセスを記録し、継続�
 # 4. Repository Structure
 - **[01-k8s-hop-by-hop-upgrade/](./01-k8s-hop-by-hop-upgrade/)**: K8s Hop-by-Hop Upgrade (Ansible)
   - Ansibleを用いたサービス影響を最小化するアップグレード自動化
-- **[02-k8s-self-healing-tool/](./02-k8s-self-healing-tool/)**: K8s Self-Healing Toolkit (Python)
-  - Python SDKによる障害検知及び自動復旧機能
+- **[02-k8s-diagnosis-tool/](./02-k8s-diagnosis-tool/)**: K8s SRE Diagnosis Toolkit (Python)
+  - Python SDKを用いた障害検知及びロギング(Logging)
 - **[03-ocp-cert-management/](./03-ocp-cert-management/)**: Automated Certificate Management (Python)
   - OCP証明書のライフサイクル自動管理
 - **[04-k8s-scale-out-terraform/](./04-k8s-scale-out-terraform/)**: Multi-node Scale-out (Terraform)
