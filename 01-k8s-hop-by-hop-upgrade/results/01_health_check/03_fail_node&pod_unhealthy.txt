@@ -1,0 +1,58 @@
+((venv) ) [bomey@k8s-bastion ansible]$ kubectl get pod -n kube-system
+NAME                                           READY   STATUS             RESTARTS       AGE
+calico-kube-controllers-564985c589-vk2rv       1/1     Running            3 (71m ago)    289d
+calico-node-5759l                              1/1     Running            10 (71m ago)   389d
+calico-node-ftpzr                              1/1     Running            16 (33m ago)   389d
+calico-node-tzpmd                              1/1     Running            14 (33m ago)   389d
+coredns-ff6cbdfc9-cmqtn                        1/1     Running            10 (71m ago)   389d
+coredns-ff6cbdfc9-snvp8                        0/1     CrashLoopBackOff   3 (26s ago)    289d
+coredns-ff6cbdfc9-w5l8g                        1/1     Running            0              50s
+etcd-k8s-master.bomey.com                      1/1     Running            17 (71m ago)   389d
+kube-apiserver-k8s-master.bomey.com            1/1     Running            20 (71m ago)   389d
+kube-controller-manager-k8s-master.bomey.com   1/1     Running            20 (71m ago)   389d
+kube-proxy-7fplf                               1/1     Running            30 (33m ago)   389d
+kube-proxy-rf9xb                               1/1     Running            32 (33m ago)   389d
+kube-proxy-zbgck                               1/1     Running            0              7m41s
+kube-scheduler-k8s-master.bomey.com            1/1     Running            18 (71m ago)   389d
+
+((venv) ) [bomey@k8s-bastion ansible]$ kubectl get nodes
+NAME                    STATUS     ROLES           AGE    VERSION
+k8s-master.bomey.com    Ready      control-plane   389d   v1.30.9
+k8s-worker1.bomey.com   NotReady   <none>          389d   v1.30.9
+k8s-worker2.bomey.com   Ready      <none>          389d   v1.30.9
+
+((venv) ) [bomey@k8s-bastion ansible]$ ansible-playbook k8s_upgrade.yml
+
+PLAY [[Phase1]  Pre-flight Health Check] ***********************************************************************************************************************************************************
+
+TASK [Health Check : Retrieve status of all nodes] *************************************************************************************************************************************************
+ok: [localhost]
+
+TASK [Health Check : Retrieve status of kube-system Pod] *******************************************************************************************************************************************
+ok: [localhost]
+
+TASK [Health Check: Extract NotReady nodes to ensure Cluster Integrity] ****************************************************************************************************************************
+[WARNING]: Collection community.general does not support Ansible version 2.16.16
+ok: [localhost]
+
+TASK [Health Check : Display Error Message] ********************************************************************************************************************************************************
+ok: [localhost] => {
+    "msg": [
+        "##################################################",
+        "[Health Check Error] Resources NOT in 'Ready' state",
+        "--------------------------------------------------",
+        "Unhealthy Nodes: ['k8s-worker1.bomey.com']",
+        "Unhealthy Pods: ['coredns-ff6cbdfc9-snvp8']",
+        "--------------------------------------------------",
+        "The upgrade process has been aborted.",
+        "##################################################"
+    ]
+}
+
+TASK [Result of Health check (Abort)] **************************************************************************************************************************************************************
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Pre-flight check failed. Please check the debug message above."}
+
+PLAY RECAP *****************************************************************************************************************************************************************************************
+localhost                  : ok=4    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0
+
+((venv) ) [bomey@k8s-bastion ansible]$
