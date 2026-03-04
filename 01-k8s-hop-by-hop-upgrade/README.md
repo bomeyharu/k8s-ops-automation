@@ -3,8 +3,8 @@
 
 # Project Status
 - [x] Phase 1 – Design & Validation
-- [ ] Phase 2 – Cluster Health Check (In-progress)
-- [ ] Phase 3 – Control Plane Automation
+- [x] Phase 2 – Cluster Health Check
+- [x] Phase 3 – Control Plane Automation (In-progress)
 - [ ] Phase 4 – Worker Node Automation
 - [ ] Phase 5 – Integration & Stress Testing
 
