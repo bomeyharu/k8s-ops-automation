@@ -1,0 +1,71 @@
+---
+- name: "[Phase1]  Pre-flight Health Check"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - vars/kube-config_path.yml
+    - upgrade_vars.yml
+  tasks:
+    - name: "Health Check : Retrieve status of all nodes"
+      kubernetes.core.k8s_info:
+        kind: Node
+        kubeconfig: "{{kubeconfig_path}}"
+      register: all_node_info
+
+    - name: "Health Check : Retrieve status of kube-system Pod"
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: kube-system
+        kubeconfig: "{{kubeconfig_path}}"
+      register: kubesystem_pod_info
+  
+    # UnhealthyのNode&kube-system podを確認し、factに代入
+    - name: "Health Check: Extract NotReady nodes to ensure Cluster Integrity"
+      ansible.builtin.set_fact:
+        # Cluster正常性確保のため、全てのNodeがReadyであることを確認。
+        # ETCD Quorumを維持するためkube-system podが全てRunningであることを確認。
+        # APIの結果から、ReadyステータスがTrueではないNode(NotReady/Unknown)&Pod(CrashLoopback/Failed/Pending)を抽出
+        not_ready_nodes: "{{ all_node_info.resources | json_query('[?status.conditions[?type==`Ready` && status!=`True`]].metadata.name') }}"
+        not_ready_pods: "{{ kubesystem_pod_info.resources | json_query('[?status.phase!=`Running` && status.phase!=`Succeeded` || status.containerStatuses[?ready==`false`]].metadata.name') | unique }}"
+    # Unhealthy状態のResourceがある場合、対象Resource名を出力
+    - name: "Health Check : Summary of Unhealthy Resources"
+      ansible.builtin.debug:
+        msg:
+          - "##################################################"
+          - "[Health Check Error] Resources NOT in 'Ready' state"
+          - "--------------------------------------------------"
+          - "Unhealthy Nodes: {{ not_ready_nodes | default('None')}}"
+          - "Unhealthy Pods: {{ not_ready_pods | default('None')}}"
+          - "--------------------------------------------------"
+          - "The upgrade process has been aborted."
+          - "##################################################"
+      when: (not_ready_nodes | length > 0) or (not_ready_pods | length > 0)
+
+    # Unhealthy状態のResourceが存在した場合、UPGRADE作業を中断
+    - name: "Result of Health check (Abort)"
+      ansible.builtin.fail:
+        msg: "Pre-flight check failed. Please check the debug message above."
+      when: (not_ready_nodes | length > 0) or (not_ready_pods | length > 0)
+
+    # 全てのResourceがHealthy状態の場合、作業を継続
+    - name: "Result of Node Health check (Success)"
+      ansible.builtin.debug:
+        msg:
+          - "[Health Check Success] All nodes and kube-system pods are in 'Ready' state."
+          - "Proceeding with the upgrade process safely."
+      when: (not_ready_nodes | length == 0) and (not_ready_pods | length == 0)
+    
+    # [Phase2]Control Plane Upgade前のTarget Version確認
+    - name: "Final confirmation for Control Plane Upgrade"
+      ansible.builtin.pause:
+        prompt: |
+          [Health Check Result]
+          - Status        : All nodes/kube-system pods are READY.
+          - Target Version: {{ target_kube_version }}
+          
+          ---------------------------------------------------------
+          Step 1: Upgrade CONTROL-PLANE nodes (One-by-One)
+          ---------------------------------------------------------
+          Do you want to proceed with Control Plane Upgrade? 
+          (Press Enter to continue, Ctrl+C to abort)

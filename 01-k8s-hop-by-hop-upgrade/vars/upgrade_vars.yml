@@ -1,5 +1,5 @@
 # UpgradeするTarget Versionを記入 
-target_kube_version: "1.30.2"
+target_kube_version: "1.31.6"
 
 # HostOSのセキュリティーパッチを実行するか可否を記入 (true / false)
 target_node_os_patch: true
