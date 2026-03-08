@@ -67,6 +67,7 @@ Ansible Playbookを活用し、アップグレード作業の標準化及び効�
 
 # Future Improvements
 - Ansible Execution Environmentへの移行。
+- Checkpointを導入し、Upgrade中断・再開のケースでも問題なくPlaybookが実行できるように改善。
 
 # Validation & Results（Planned）
 本番環境を想定した設計原則に基づき、検証環境にて実施予定です。
