@@ -1,5 +1,5 @@
 ---
-- name: "[Phase1]  Pre-flight Health Check"
+- name: "[Phase1] Pre-flight Health Check"
   hosts: localhost
   connection: local
   gather_facts: false
@@ -69,7 +69,7 @@
           Do you want to proceed with Control Plane Upgrade? 
           (Press Enter to continue, Ctrl+C to abort)
 
-- name: "[Phase2]  Control Plane Upgrade"
+- name: "[Phase2] Control Plane Upgrade"
   hosts: masters
   gather_facts: true
   become: true
@@ -148,7 +148,6 @@
           - "------------------------------------------------------------"
       when: not (current_node_info.resources[0].spec.unschedulable | default(false) | bool)
 
-
     - name: "Reboot node if OS was patched"
       ansible.builtin.reboot:
         reboot_timeout: 600
@@ -211,43 +210,73 @@
         state: restarted
         enabled: yes
 
-    - name: "Wait for kubelet to be active"
-      ansible.builtin.command: "systemctl is-active kubelet"
-      register: kubelet_status
-      until: kubelet_status.rc == 0
-      retries: 20
-      delay: 5
-      ignore_errors: yes
-      changed_when: false
+    - name: "Kubelet Activation Check"
+      block:
+        - name: "Wait for kubelet to be active"
+          ansible.builtin.command: "systemctl is-active kubelet"
+          register: kubelet_status
+          until: kubelet_status.rc == 0
+          retries: 20
+          delay: 5
+          changed_when: false
 
-    #kubeletが立ち上がらない場合のStatus出力
-    - name: "ERROR: Kubelet activation failed"
-      ansible.builtin.fail:
-        msg: 
-          - "[Health Check Result]"   
-          - "[ERROR] Kubelet failed to start on {{ inventory_hostname }}"
-          - "Status: {{ (kubelet_status.rc == 0) | ternary('Active' ,'Inactive')}}"
-          - "Total Attempts: {{ kubelet_status.attempts }}"
-          # Troubleshooting guide
-          - "Manual inspection is required. Please run the following commands:"
-          - "------------------------------------------------------------"
-          - "[Action 1] SSH Access (from Bastion):"
-          - " ssh {{ inventory_hostname }}"
-          - "[Action 2] Check kubelet status (from node):"
-          - " systemctl status kubelet"
-          - " journalctl -u kubelet"
-          - "------------------------------------------------------------"
-      when: kubelet_status.rc != 0
+        # kubeletが立ち上がった場合のStatus出力
+        - name: "Confirm Kubelet Activation Status"
+          ansible.builtin.debug:
+            msg:
+              - "[Health Check Result]" 
+              - "Kubelet is now ACTIVE on {{ inventory_hostname }}"
+              - "Status: {{ (kubelet_status.rc == 0) | ternary('Active' ,'Inactive')}}"
+              - "Exit Code: {{ kubelet_status.rc }}"
+              - "Retries Attempted: {{ kubelet_status.attempts | default(1) }} times"
 
-    #kubeletが立ち上がった場合のStatus出力
-    - name: "Confirm Kubelet Activation Status"
-      ansible.builtin.debug:
-        msg:
-          - "[Health Check Result]" 
-          - "Kubelet is now ACTIVE on {{ inventory_hostname }}"
-          - "Status: {{ (kubelet_status.rc == 0) | ternary('Active' ,'Inactive')}}"
-          - "Exit Code: {{ kubelet_status.rc }}"
-          - "Retries Attempted: {{ kubelet_status.attempts | default(1) }} times"
+      rescue:
+        # kubeletが立ち上がらない場合のStatus出力
+        - name: "ERROR: Kubelet activation failed"
+          ansible.builtin.fail:
+            msg: 
+              - "[Health Check Result]"   
+              - "[ERROR] Kubelet failed to start on {{ inventory_hostname }}"
+              - "Status: Inactive"
+              - "Total Attempts: {{ kubelet_status.attempts | default('Unknown') }}"
+              # Troubleshooting guide
+              - "Manual inspection is required. Please run the following commands:"
+              - "------------------------------------------------------------"
+              - "[Action 1] SSH Access (from Bastion):"
+              - " ssh {{ inventory_hostname }}"
+              - "[Action 2] Check kubelet status (on node):"
+              - " systemctl status kubelet"
+              - " journalctl -u kubelet"
+              - "------------------------------------------------------------"
+    
+    # Single Control Plane構成の場合、Upgradeの際API通信ができなくなるため、wait_for moduleを使用し、状態をチェック
+    - name: "K8s API Status check"
+      block:
+        - name: "Check K8S API Connection (Wait for 6443)"
+          ansible.builtin.wait_for:
+            host: "{{ inventory_hostname }}"
+            port: 6443
+            state: started
+            delay: 20
+            timeout: 300
+          delegate_to: localhost
+      
+      rescue:
+        # API Serverの応答がない場合、Fail処理
+        - name: "API Server Not Responding"
+          ansible.builtin.fail:
+            msg: 
+              - "[Health Check Result]" 
+              - "[ERROR] kube-apiserver is not responding."
+              # Troubleshooting guide
+              - "Manual inspection is required. Please run the following commands:"
+              - "------------------------------------------------------------"
+              - "[Action 1] SSH Access (from Bastion):"
+              - " ssh {{ inventory_hostname }}"
+              - "[Action 2] Check apiserver container status (on node):"
+              - " crictl ps | grep apiserver"
+              - "[Action 3] Inspect apiserver container logs (on node):"
+              - " crictl logs $(crictl ps | grep apiserver | awk '{print $1}')"
 
     #Node Readyをチェック (Wait 3min)
     - name: "Health Check : Wait for Node to be READY"
@@ -304,3 +333,13 @@
           - "[Health Check Result]"
           - "Node: {{ inventory_hostname }}"
           - "Status: {{ after_upgrade_node_info.resources[0].spec.unschedulable | ternary('Ready,SchedulingDisabled','Ready') }}"
+
+- name: "[Phase3] Worker Node Upgrade"
+  hosts: workers
+  gather_facts: true
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars_files:
+    - vars/kube-config_path.yml
+    - vars/upgrade_vars.yml
