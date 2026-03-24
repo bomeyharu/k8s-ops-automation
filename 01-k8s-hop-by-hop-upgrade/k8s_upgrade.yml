@@ -1,11 +1,11 @@
 ---
-- name: "[Phase1]  Pre-flight Health Check"
+- name: "[Phase1] Pre-flight Health Check"
   hosts: localhost
   connection: local
   gather_facts: false
   vars_files:
     - vars/kube-config_path.yml
-    - upgrade_vars.yml
+    - vars/upgrade_vars.yml
   tasks:
     - name: "Health Check : Retrieve status of all nodes"
       kubernetes.core.k8s_info:
@@ -43,7 +43,7 @@
       when: (not_ready_nodes | length > 0) or (not_ready_pods | length > 0)
 
     # Unhealthy状態のResourceが存在した場合、UPGRADE作業を中断
-    - name: "Result of Health check (Abort)"
+    - name: "ERROR: Result of Health check (Abort)"
       ansible.builtin.fail:
         msg: "Pre-flight check failed. Please check the debug message above."
       when: (not_ready_nodes | length > 0) or (not_ready_pods | length > 0)
@@ -63,9 +63,283 @@
           [Health Check Result]
           - Status        : All nodes/kube-system pods are READY.
           - Target Version: {{ target_kube_version }}
-          
           ---------------------------------------------------------
           Step 1: Upgrade CONTROL-PLANE nodes (One-by-One)
           ---------------------------------------------------------
           Do you want to proceed with Control Plane Upgrade? 
           (Press Enter to continue, Ctrl+C to abort)
+
+- name: "[Phase2] Control Plane Upgrade"
+  hosts: masters
+  gather_facts: true
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars_files:
+    - vars/kube-config_path.yml
+    - vars/upgrade_vars.yml
+  tasks:
+    # Kubernetes Versionをチェックし、Upgrade済みNodeであれば本PhaseをSkip
+    - name: "Check current version"
+      ansible.builtin.command: "kubeadm version -o short"
+      register: current_version
+      changed_when: false
+
+    - name: "Skip all steps if already upgraded"
+      ansible.builtin.meta: end_host
+      when: target_kube_version in current_version.stdout
+
+    # Kubernetesのアップグレード実施前、NodeOSのパッチを実施
+    - name: Upgrade node OS to latest version
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        security: yes
+        # OS upgrade手順の中で、予期せぬKubernetes関連パッケージのアップデートを防ぐため、除外
+        # システムに不要なプラグイン(dnf versionlock)の導入を避けるため、excludeを活用
+        exclude: "kubelet,kubeadm,kubectl"
+      when: target_node_os_patch | bool
+
+    - name: "Control Plane Cordon & Drain"
+      kubernetes.core.k8s_drain:
+        name: "{{ inventory_hostname }}"
+        kubeconfig: "{{ kubeconfig_path }}"
+        # Control planeが1台構成の場合は、Cordonのみ実施・冗長化されている場合はDrainを実施。
+        state: "{{ (groups['masters'] | length > 1) | ternary('drain', 'cordon') }}"
+        delete_options: 
+          # force: "{{ (groups['masters'] | length > 1) | bool }}"
+          ignore_daemonsets: "{{ (groups['masters'] | length > 1) | bool }}"
+          delete_emptydir_data: "{{ (groups['masters'] | length > 1) | bool }}"
+      delegate_to: localhost
+
+    - name: "Confirm actual Cordon status via API"
+      kubernetes.core.k8s_info:
+        kind: Node
+        name: "{{ inventory_hostname }}"
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: current_node_info
+      delegate_to: localhost
+
+    - name: "Health Check : Node Scheduling Status"
+      ansible.builtin.debug:
+        msg:
+          - "[Health Check Result]"
+          - "Node Name: {{ inventory_hostname }}"
+          - "Cordoned (True=Yes): {{ current_node_info.resources[0].spec.unschedulable | default(false) }}"
+    
+    # cordon/drainが失敗した場合、Failed処理
+    - name: "ERROR: Result of Drain/Cordon check (Abort)"
+      ansible.builtin.fail:
+        msg: 
+          - "[Health Check Result]"
+          - "[Check Failed] Node '{{ inventory_hostname }}' is NOT cordoned/drained."
+          - "The upgrade process has been aborted to protect workloads and data integrity."
+          #Troubleshooting guide
+          - "Manual inspection is required. Please run the following commands:"
+          - "------------------------------------------------------------"
+          - "[Action 1] Identify pods blocking the drain:"
+          - "  kubectl get pods -A -o wide | grep {{ inventory_hostname }}"
+          - "[Action 2] Check PodDisruptionBudget(ALLOWD DISRUPTIONS):"
+          - "  kubectl get pdb -A"
+          - "[Action 3] Check Eviction events in the cluster:"
+          - "  kubectl get events -A --sort-by='.lastTimestamp' | grep -i eviction"
+          - "[Action 4] Manually attempt drain for detailed error:"
+          - "  kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --force"
+          - "------------------------------------------------------------"
+      when: not (current_node_info.resources[0].spec.unschedulable | default(false) | bool)
+
+    - name: "Reboot node if OS was patched"
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+      when: target_node_os_patch | bool
+
+    # Rebootあと、K8S APIとの通信可否を確認
+    - name: "Check K8S API Connection"
+      ansible.builtin.wait_for:
+        host: "{{ inventory_hostname }}"
+        port: 6443
+        delay: 20
+        timeout: 300
+        state: started
+      delegate_to: localhost
+      when: target_node_os_patch | bool
+
+    - name: "Update facts after reboot"
+      ansible.builtin.setup:
+      when: target_node_os_patch | bool
+
+    - name: "Check Node OS Version"
+      ansible.builtin.debug:
+        msg: 
+          - "Node: {{ inventory_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+      when: target_node_os_patch | bool
+    
+    - name: "Upgrade kubeadm package to {{ target_kube_version }}"
+      ansible.builtin.dnf:
+        name: "kubeadm-{{ target_kube_version }}*"
+        state: present
+        disable_excludes: kubernetes
+
+    - name: "Kubernetes Upgrade: First Control Plane (Apply)"
+      ansible.builtin.command: "kubeadm upgrade apply v{{ target_kube_version }} -y"
+      when: inventory_hostname == groups['masters'][0]
+      register: upgrade_apply_result
+      changed_when: "'SUCCESS!' in upgrade_apply_result.stdout"
+
+    - name: "Kubernetes Upgrade: Other Control Planes (Node)"
+      ansible.builtin.command: "kubeadm upgrade node"
+      when: inventory_hostname != groups['masters'][0]
+      register: upgrade_node_result
+      changed_when: "'SUCCESS!' in upgrade_node_result.stdout"
+
+    - name: "Upgrade kubelet and kubectl packages"
+      ansible.builtin.dnf:
+        name:
+          - "kubelet-{{ target_kube_version }}*"
+          - "kubectl-{{ target_kube_version }}*"
+        state: present
+        disable_excludes: kubernetes
+
+    # kubelet.service 再起動
+    - name: "Restart kubelet service"
+      ansible.builtin.systemd:
+        name: kubelet
+        daemon_reload: Yes
+        state: restarted
+        enabled: yes
+
+    - name: "Kubelet Activation Check"
+      block:
+        - name: "Wait for kubelet to be active"
+          ansible.builtin.command: "systemctl is-active kubelet"
+          register: kubelet_status
+          until: kubelet_status.rc == 0
+          retries: 20
+          delay: 5
+          changed_when: false
+
+        # kubeletが立ち上がった場合のStatus出力
+        - name: "Confirm Kubelet Activation Status"
+          ansible.builtin.debug:
+            msg:
+              - "[Health Check Result]" 
+              - "Kubelet is now ACTIVE on {{ inventory_hostname }}"
+              - "Status: {{ (kubelet_status.rc == 0) | ternary('Active' ,'Inactive')}}"
+              - "Exit Code: {{ kubelet_status.rc }}"
+              - "Retries Attempted: {{ kubelet_status.attempts | default(1) }} times"
+
+      rescue:
+        # kubeletが立ち上がらない場合のStatus出力
+        - name: "ERROR: Kubelet activation failed"
+          ansible.builtin.fail:
+            msg: 
+              - "[Health Check Result]"   
+              - "[ERROR] Kubelet failed to start on {{ inventory_hostname }}"
+              - "Status: Inactive"
+              - "Total Attempts: {{ kubelet_status.attempts | default('Unknown') }}"
+              # Troubleshooting guide
+              - "Manual inspection is required. Please run the following commands:"
+              - "------------------------------------------------------------"
+              - "[Action 1] SSH Access (from Bastion):"
+              - " ssh {{ inventory_hostname }}"
+              - "[Action 2] Check kubelet status (on node):"
+              - " systemctl status kubelet"
+              - " journalctl -u kubelet"
+              - "------------------------------------------------------------"
+    
+    # Single Control Plane構成の場合、Upgradeの際API通信ができなくなるため、wait_for moduleを使用し、状態をチェック
+    - name: "K8s API Status check"
+      block:
+        - name: "Check K8S API Connection (Wait for 6443)"
+          ansible.builtin.wait_for:
+            host: "{{ inventory_hostname }}"
+            port: 6443
+            state: started
+            delay: 20
+            timeout: 300
+          delegate_to: localhost
+      
+      rescue:
+        # API Serverの応答がない場合、Fail処理
+        - name: "API Server Not Responding"
+          ansible.builtin.fail:
+            msg: 
+              - "[Health Check Result]" 
+              - "[ERROR] kube-apiserver is not responding."
+              # Troubleshooting guide
+              - "Manual inspection is required. Please run the following commands:"
+              - "------------------------------------------------------------"
+              - "[Action 1] SSH Access (from Bastion):"
+              - " ssh {{ inventory_hostname }}"
+              - "[Action 2] Check apiserver container status (on node):"
+              - " crictl ps | grep apiserver"
+              - "[Action 3] Inspect apiserver container logs (on node):"
+              - " crictl logs $(crictl ps | grep apiserver | awk '{print $1}')"
+
+    #Node Readyをチェック (Wait 3min)
+    - name: "Health Check : Wait for Node to be READY"
+      kubernetes.core.k8s_info:
+        kind: Node
+        name: "{{ inventory_hostname }}"
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: after_upgrade_node_info
+      delegate_to: localhost
+      until: >
+        after_upgrade_node_info.resources[0].status.conditions | 
+        json_query("[?type=='Ready'].status") | first == 'True'
+      retries: 18
+      delay: 10
+
+    - name: "Health Check : Final Node Health Check before uncordon"
+      ansible.builtin.debug:
+        msg:
+          - "[Health Check Result]" 
+          - "Node Name: {{ inventory_hostname }}"
+          - "Ready Status: {{ after_upgrade_node_info.resources[0].status.conditions | json_query('[?type==`Ready`].status') | first }}"
+          - "Scheduling Disabled: {{ after_upgrade_node_info.resources[0].spec.unschedulable | default(false) }}"
+          - "K8S Version: {{ after_upgrade_node_info.resources[0].status.nodeInfo.kubeletVersion }}"
+
+    # NodeがNotReadyである場合、作業中断
+    - name: "ERROR: Node is NOT Ready"
+      ansible.builtin.fail:
+        msg: 
+          - "[Health Check Result]" 
+          - "Node {{ inventory_hostname }} is still not in Ready state."
+          # Troubleshooting guide
+          - "Manual inspection is required. Please run the following commands:"
+          - "------------------------------------------------------------"
+          - "[Action 1] Check Cluster status (from Bastion):"
+          - "   kubectl get node {{ inventory_hostname }}"
+          - "   kubectl describe node {{ inventory_hostname }}"
+          - "[Action 2] Check Node OS status (SSH access):"
+          - "   ssh {{ inventory_hostname }}"
+          - "------------------------------------------------------------"
+      when: (after_upgrade_node_info.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) != 'True'
+
+    # Node uncordon実施
+    - name: "Control Plane Uncordon"
+      kubernetes.core.k8s_drain:
+        name: "{{ inventory_hostname }}"
+        kubeconfig: "{{ kubeconfig_path }}"
+        state: uncordon
+      delegate_to: localhost
+
+    # NodeがReadyになったことを確認
+    - name: "Health Check : Result Retrieve status of Target node"
+      ansible.builtin.debug:
+        msg:
+          - "[Health Check Result]"
+          - "Node: {{ inventory_hostname }}"
+          - "Status: {{ after_upgrade_node_info.resources[0].spec.unschedulable | ternary('Ready,SchedulingDisabled','Ready') }}"
+
+- name: "[Phase3] Worker Node Upgrade"
+  hosts: workers
+  gather_facts: true
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars_files:
+    - vars/kube-config_path.yml
+    - vars/upgrade_vars.yml

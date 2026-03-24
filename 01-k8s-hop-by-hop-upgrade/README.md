@@ -26,6 +26,9 @@ Ansible Playbookを活用し、アップグレード作業の標準化及び効�
 - Control Plane / Worker Node両方を対象とする。
 
 ## ◼ Design Strategy
+- **単一マスター構成への対応**: 現時点での検証環境は単一Control Plane構成であるため、再起動時に API サーバーが一時的に中断されます。この制約を考慮し、API 内部状態の`Ready`チェックの代わりに **ポート稼働確認（wait_for: 6443）** を優先的に検証するロジックを採用しました。
+- **今後の拡張計画**: **Phase 3 (Scale-out)** の完了後、マルチマスター環境における精緻な **ETCD Quorum（正足数）チェックおよび高可用性検証ロジック** を追加実装する予定です。
+
 ### 1. Safety-First Strategy (Hop-by-Hop)
 - **Service Continuity**: `ansible serial: 1`を適用し、ノード１台ずつアップグレード実施。
 - **Quorum Preservation**: Control Plane アップグレードの際、ETCD Quorumを維持。
@@ -64,6 +67,7 @@ Ansible Playbookを活用し、アップグレード作業の標準化及び効�
 
 # Future Improvements
 - Ansible Execution Environmentへの移行。
+- Checkpointを導入し、Upgrade中断・再開のケースでも問題なくPlaybookが実行できるように改善。
 
 # Validation & Results（Planned）
 本番環境を想定した設計原則に基づき、検証環境にて実施予定です。
